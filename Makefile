@@ -5,20 +5,34 @@ CFLAGS = -Wall -Wextra -O2
 # -O2: Optimization level 2 (standard for production)
 
 # 2. File Paths
-TARGET = server
-SRC = src/server.c
+SERVER_TARGET = server
+SERVER_SRC = src/server.c
+CLIENT_TARGET = client
+CLIENT_SRC = src/client.c
 
 # 3. Default Rule (what happens when you type 'make')
-all: $(TARGET)
+all: $(SERVER_TARGET) $(CLIENT_TARGET)
 
 # 4. Build Rule: How to turn .c into an executable
-$(TARGET): $(SRC)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SRC)
+$(SERVER_TARGET): $(SERVER_SRC)
+	$(CC) $(CFLAGS) -o $(SERVER_TARGET) $(SERVER_SRC)
+$(CLIENT_TARGET): $(CLIENT_SRC)
+	$(CC) $(CFLAGS) -o $(CLIENT_TARGET) $(CLIENT_SRC)
 
-# 5. Run Rule: Compile (if needed) and then execute
-run: $(TARGET)
-	./$(TARGET)
+# 5. Run Rule: Compile server (if needed) and then execute
+run: $(SERVER_TARGET)
+	./$(SERVER_TARGET)
 
-# 6. Clean Rule: Remove the executable to start fresh
+# 6. Test
+test: $(SERVER_TARGET) $(CLIENT_TARGET)
+	@echo "--- Starting Server ---"
+	./$(SERVER_TARGET) & PID=$$!; \
+	sleep 0.5; \
+	echo "--- Running Client ---"; \
+	./$(CLIENT_TARGET); \
+	echo "--- Stopping Server ---"; \
+	kill $$PID
+
+# 7. Clean Rule: Remove the executable to start fresh
 clean:
-	rm -f $(TARGET)
+	rm -f $(SERVER_TARGET) $(CLIENT_TARGET)

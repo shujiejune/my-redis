@@ -61,6 +61,8 @@ int main() {
 
         close(conn_fd);
     }
+
+    return 0;
 }
 
 static void do_something(int conn_fd) {
