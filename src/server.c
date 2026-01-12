@@ -65,7 +65,7 @@ int main() {
 
 static void do_something(int conn_fd) {
     char rbuf[64] = {};
-    ssize_t n = read(conn_fd, rbuf, sizeof(rbuf) - 1);
+    ssize_t n = read(conn_fd, rbuf, sizeof(rbuf) - 1);  // leave the 64th byte as a guaranteed zero
     if (n < 0) {
         perror("Read failed");
         return;
