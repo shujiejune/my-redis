@@ -57,7 +57,13 @@ int main() {
         }
         printf("Client connected! Handle: %d\n", conn_fd);
 
-        do_something(conn_fd);
+        // do_something(conn_fd);
+        while (1) {
+            int32_t err = one_request(conn_fd); // read 1 request and write 1 response
+            if (err) {
+                break;
+            }
+        }
 
         close(conn_fd);
     }
