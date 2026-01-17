@@ -27,6 +27,10 @@ int32_t read_full(int fd, char *buf, size_t n) {
         // ssize_t is signed, used when a function needs to return a count or an error.
         ssize_t rv = read(fd, buf, n);
         if (rv <= 0) {
+            // handle the signal interruption
+            if (rv < 0 && errno == EINTR) {
+                continue;
+            }
             return -1;  // error or unexpected EOF
         }
         // sanity check for things that should be impossible.
@@ -42,6 +46,9 @@ int32_t write_all(int fd, char *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = write(fd, buf, n);
         if (rv <= 0) {
+            if (rv < 0 && errno == EINTR) {
+                continue;
+            }
             return -1;  // error or unexpected EOF
         }
         assert((size_t)rv <= n);
