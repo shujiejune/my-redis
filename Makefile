@@ -1,38 +1,52 @@
-# 1. Compiler and Flags
+# 0. Compiler and Flags
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
+CFLAGS = -Wall -Wextra -O2 -Isrc
 # -Wall -Wextra: specific warning flags to catch common bugs
 # -O2: Optimization level 2 (standard for production)
+# -Isrc: look for header files in src/
 
-# 2. File Paths
-SERVER_TARGET = server
-SERVER_SRC = src/server.c
-CLIENT_TARGET = client
-CLIENT_SRC = src/client.c
+# List of targets to build by default
+all: server client
 
-# 3. Default Rule (what happens when you type 'make')
-all: $(SERVER_TARGET) $(CLIENT_TARGET)
+# ----------------------------------------------------
+# 1. Compile common code separately
+#    -c means "Compile to object file (.o), don't link yet"
+# ----------------------------------------------------
+src/common.o: src/common.c
+	$(CC) $(CFLAGS) -c src/common.c -o src/common.o
 
-# 4. Build Rule: How to turn .c into an executable
-$(SERVER_TARGET): $(SERVER_SRC)
-	$(CC) $(CFLAGS) -o $(SERVER_TARGET) $(SERVER_SRC)
-$(CLIENT_TARGET): $(CLIENT_SRC)
-	$(CC) $(CFLAGS) -o $(CLIENT_TARGET) $(CLIENT_SRC)
+# ----------------------------------------------------
+# 2. Build the Server
+#    Depends on server.c AND common.o
+# ----------------------------------------------------
+server: src/server.c src/common.o
+	$(CC) $(CFLAGS) -o server src/server.c src/common.o
 
-# 5. Run Rule: Compile server (if needed) and then execute
-run: $(SERVER_TARGET)
-	./$(SERVER_TARGET)
+# ----------------------------------------------------
+# 3. Build the Client
+#    Depends on client.c AND common.o
+# ----------------------------------------------------
+client: src/client.c src/common.o
+	$(CC) $(CFLAGS) -o client src/client.c src/common.o
 
-# 6. Test
-test: $(SERVER_TARGET) $(CLIENT_TARGET)
+# ----------------------------------------------------
+# 4. Utilities
+# ----------------------------------------------------
+
+# Run just the server
+run: server
+	./server
+
+# Run the test script
+test: server client
 	@echo "--- Starting Server ---"
-	./$(SERVER_TARGET) & PID=$$!; \
+	./server & PID=$$!; \
 	sleep 0.5; \
 	echo "--- Running Client ---"; \
-	./$(CLIENT_TARGET); \
+	./client; \
 	echo "--- Stopping Server ---"; \
 	kill $$PID
 
-# 7. Clean Rule: Remove the executable to start fresh
 clean:
-	rm -f $(SERVER_TARGET) $(CLIENT_TARGET)
+	rm -f server client src/*.o
+	-pkill -f server

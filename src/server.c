@@ -6,15 +6,12 @@
 #include <errno.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "common.h"
 
 const size_t k_max_msg = 4096;
 
-static int32_t read_full(int fd, char *buf, size_t n);
-static int32_t write_all(int fd, char *buf, size_t n);
 static int32_t one_request(int conn_fd);
-static void do_something(int conn_fd);
-static void msg(const char *msg);
-static void die(const char *msg);
+// static void do_something(int conn_fd);
 
 int main() {
     /* 1. Obtain a socket handle */
@@ -23,8 +20,7 @@ int main() {
     // run "man ip.7" to view ip sockets manual
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
-        perror("socket creation failed");
-        exit(1);
+        die("socket creation failed");
     }
 
     /* 2. Set socket options */
@@ -78,36 +74,6 @@ int main() {
     return 0;
 }
 
-static int32_t read_full(int fd, char *buf, size_t n) {
-    while (n > 0) {
-        // size_t is non-negative (0 - MAX_INT), used for counting.
-        // ssize_t is signed, used when a function needs to return a count or an error.
-        ssize_t rv = read(fd, buf, n);
-        if (rv <= 0) {
-            return -1;  // error or unexpected EOF
-        }
-        // sanity check for things that should be impossible.
-        // If read() returns MORE bytes than n, crash immediately.
-        assert((size_t)rv <= n);
-        n -= (size_t)rv;
-        buf += rv;
-    }
-    return 0;
-}
-
-static int32_t write_all(int fd, char *buf, size_t n) {
-    while (n > 0) {
-        ssize_t rv = write(fd, buf, n);
-        if (rv <= 0) {
-            return -1;  // error or unexpected EOF
-        }
-        assert((size_t)rv <= n);
-        n -= (size_t)rv;
-        buf += rv;
-    }
-    return 0;
-}
-
 /* Implementation of a Length-Prefixed Framing Protocol */
 static int32_t one_request(int conn_fd) {
     /* 1. Create the read buffer */
@@ -149,13 +115,14 @@ static int32_t one_request(int conn_fd) {
 
     /* 7. Write leangth header and body to the write buffer */
     len = (uint32_t)strlen(reply);
-    memcpy(rbuf, &len, 4);
-    memcpy(&rbuf[4], reply, len);
+    memcpy(wbuf, &len, 4);
+    memcpy(&wbuf[4], reply, len);
 
     /* 8. Send the repsonse all at once */
     return write_all(conn_fd, wbuf, 4 + len);
 }
 
+/*
 static void do_something(int conn_fd) {
     char rbuf[64] = {};
     ssize_t n = read(conn_fd, rbuf, sizeof(rbuf) - 1);  // leave the 64th byte as a guaranteed zero
@@ -168,18 +135,4 @@ static void do_something(int conn_fd) {
     char wbuf[] = "world";
     write(conn_fd, wbuf, strlen(wbuf));
 }
-
-static void msg(const char *msg) {
-    // printf is buffered, writes to stdout, i.e. the result of the program.
-    // fprintf is unbuffered (appears immediately), writes to stderr, separated from the data stream.
-    fprintf(stderr, "%s\n", msg);
-}
-
-static void die(const char *msg) {
-    int err = errno;
-    fprintf(stderr, "[%d] %s\n", err, msg);
-    // exit(1): quit. It cleans up, flushes buffers, and closes files gracefully.
-    // abort(): crash. It raises the SIGABRT signal, forces the OS to dump a
-    // snapshot of memory at the crashing moment, which can be opened in GDB later.
-    abort();
-}
+*/
