@@ -5,11 +5,18 @@
 #include <unistd.h>
 #include <string.h>
 #include <assert.h>
+#include <fcntl.h>
+
+const size_t k_max_msg = 32 << 20;  // likely larger than the kernel buffer
 
 void msg(const char *msg) {
     // printf is buffered, writes to stdout, i.e. the result of the program.
     // fprintf is unbuffered (appears immediately), writes to stderr, separated from the data stream.
     fprintf(stderr, "%s\n", msg);
+}
+
+void msg_errno(const char *msg) {
+    fprintf(stderr, "[%d] %s\n", errno, msg);
 }
 
 void die(const char *msg) {
@@ -19,6 +26,23 @@ void die(const char *msg) {
     // abort(): crash. It raises the SIGABRT signal, forces the OS to dump a
     // snapshot of memory at the crashing moment, which can be opened in GDB later.
     abort();
+}
+
+void fd_set_nb(int fd) {
+    errno = 0;
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (errno) {
+        die("fcntl error");
+        return;
+    }
+
+    flags |= O_NONBLOCK;
+
+    errno = 0;
+    (void)fcntl(fd, F_SETFL, flags);
+    if (errno) {
+        die("fcntl error");
+    }
 }
 
 int32_t read_full(int fd, char *buf, size_t n) {
