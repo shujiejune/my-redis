@@ -7,8 +7,6 @@
 #include <assert.h>
 #include <fcntl.h>
 
-const size_t k_max_msg = 32 << 20;  // likely larger than the kernel buffer
-
 void msg(const char *msg) {
     // printf is buffered, writes to stdout, i.e. the result of the program.
     // fprintf is unbuffered (appears immediately), writes to stderr, separated from the data stream.
@@ -29,19 +27,24 @@ void die(const char *msg) {
 }
 
 void fd_set_nb(int fd) {
-    errno = 0;
+    // fcntl: file control
+    // int fcntl(int fd, int op, .../* arg */)
+    // perform the operation op on the open file descriptor fd.
+    // the third argument is optional (determined by op).
+    // the returned integer is the current config of the socket.
+    // config: access mode (O_RDONLY | O_WRONLY | O_RDWR) + status flags (O_APPEND | O_NONBLOCK)
     int flags = fcntl(fd, F_GETFL, 0);
-    if (errno) {
-        die("fcntl error");
-        return;
+    if (flags == -1) {
+        die("fcntl F_GETFL");
     }
 
+    // O_NONBLOCK: a constant with a specific bit set to 1, e.g. 0000 0100
+    // |= is bitwise OR operand, keep all the bits that were already 1,
+    // and also set the non-blocking bit to 1.
     flags |= O_NONBLOCK;
 
-    errno = 0;
-    (void)fcntl(fd, F_SETFL, flags);
-    if (errno) {
-        die("fcntl error");
+    if (fcntl(fd, F_SETFL, flags) == -1) {
+        die("fcntl F_SETFL");
     }
 }
 
