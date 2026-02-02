@@ -17,6 +17,12 @@ enum {
     STATE_END = 2   // mark for deletion
 };
 
+typedef enum {
+    REQ_PROCESSED = 1,  // ate data
+    REQ_INCOMPLETE = 0, // not enough data, stop loop
+    REQ_ERROR = -1      // malformed message, kill connection
+} ReqStatus;
+
 // Context of a connection
 typedef struct Conn {
     int fd;
@@ -94,23 +100,22 @@ static int32_t accept_new_conn(int fd) {
     return 0;
 }
 
-static int32_t try_one_request(Conn *conn) {
+static ReqStatus try_one_request(Conn *conn) {
     // 1. Check for the 4-byte header
     if (conn->rbuf_size < 4) {
-        return 0;
+        return REQ_INCOMPLETE;
     }
 
     uint32_t len = 0;
     memcpy(&len, &conn->rbuf[0], 4);
     if (len > k_max_msg) {
         msg("too long");
-        conn->state = STATE_END;
-        return 0;
+        return REQ_ERROR;
     }
 
     // 2. Check for rest of the message
     if (4 + len > conn->rbuf_size) {
-        return 0;  // wait for more data
+        return REQ_INCOMPLETE;  // wait for more data
     }
 
     // 3. Got a full message
@@ -135,7 +140,7 @@ static int32_t try_one_request(Conn *conn) {
     // 6. Change connection state to response
     conn->state = STATE_RES;
 
-    return 1;
+    return REQ_PROCESSED;
 }
 
 static void handle_read(Conn *conn) {
@@ -156,8 +161,23 @@ static void handle_read(Conn *conn) {
     conn->rbuf_size += (size_t)rv;
 
     // Pipelining loop
-    // While we have enoug data for a full request, keep processing.
-    while (try_one_request(conn)) {}
+    // While there is enough data for a full request, keep processing.
+    while (1) {
+        ReqStatus status = try_one_request(conn);
+
+        if (status == REQ_INCOMPLETE) break;  // Normal break
+        if (status == REQ_ERROR) {
+            conn->state = STATE_END;  // Mark for closing
+            break;
+        }
+        // If REQ_PROCESSED, continue looping to see if there is another request
+
+        // Check: If a response is generated and the connection is switched to "Response Mode"
+        // stop reading and go send the response.
+        if (conn->state == STATE_RES) {
+            break;  // Stop processing new requests so the wbuf is not overwritten
+        }
+    }
 }
 
 static void handle_write(Conn *conn) {
@@ -227,14 +247,21 @@ int main() {
     struct pollfd poll_args[64];  // can handle up to 64 connections
 
     /* 5. Accept connections */
+    // Each iteration is a cycle of
+    // Prepare: build the list of connections to watch
+    // Wait: sleep until something happens
+    // Dispatch: handle the events
     while (1) {
+        // Reset poll arguments
         size_t n_poll = 0;
 
+        // Add the listening socket
         poll_args[n_poll].fd = fd;
-        poll_args[n_poll].events = POLLIN;
+        poll_args[n_poll].events = POLLIN;  // wake up if a client connects
         poll_args[n_poll].revents = 0;  // clear previous results
         n_poll++;
 
+        // Add all active client connections
         for (size_t i = 0; i < fd2conn_size; i++) {
             Conn *conn = fd2conn[i];
             if (!conn) continue;
@@ -245,6 +272,8 @@ int main() {
             poll_args[n_poll].revents = 0;
             poll_args[n_poll].events = 0;
 
+            // events is the translation of state to OS
+            // If state is STATE_REQ | STATE_RES, please watch for POLLIN | POLLOUT
             if (conn->state == STATE_REQ) {
                 poll_args[n_poll].events |= POLLIN;
             } else if (conn->state == STATE_RES) {
@@ -253,27 +282,33 @@ int main() {
             n_poll++;
         }
 
+        // Wait (the only blocking call)
         int rv = poll(poll_args, (nfds_t)n_poll, -1);
         if (rv < 0 && errno == EINTR) continue;
         if (rv < 0) die("poll");
 
+        // Handle listening socket
         if (poll_args[0].revents & POLLIN) {
             accept_new_conn(fd);
         }
 
+        // Handle client sockets
         for (size_t i = 1; i < n_poll; i++) {
             if (poll_args[i].revents == 0) continue;
 
+            // Find the connection using fd as the index
             int conn_fd = poll_args[i].fd;
             Conn *conn = fd2conn[conn_fd];
 
-            if (poll_args[i].revents & POLLIN) {
+            // revents is the answer from OS
+            if (poll_args[i].revents & POLLIN) {  // data has arrived
                 handle_read(conn);
             }
-            if (poll_args[i].revents & POLLOUT) {
+            if (poll_args[i].revents & POLLOUT) { // buffer space is available
                 handle_write(conn);
             }
 
+            // Cleanup if marked for death
             if (conn->state == STATE_END) {
                 conn_destroy(conn);
             }
