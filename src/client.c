@@ -55,6 +55,7 @@ int main() {
 
 L_DONE:
     close(fd);
+    free(long_msg);
     return 0;
 }
 
