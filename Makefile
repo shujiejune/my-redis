@@ -9,7 +9,7 @@ CFLAGS = -Wall -Wextra -O2 -Isrc
 all: server client
 
 # ----------------------------------------------------
-# 1. Compile common and buffer code separately
+# 1. Compile shared code separately
 #    -c means "Compile to object file (.o), don't link yet"
 # ----------------------------------------------------
 src/common.o: src/common.c
@@ -18,12 +18,15 @@ src/common.o: src/common.c
 src/buffer.o: src/buffer.c
 	$(CC) $(CFLAGS) -c src/buffer.c -o src/buffer.o
 
+src/kv.o: src/kv.c
+	$(CC) $(CFLAGS) -c src/kv.c -o src/kv.o
+
 # ----------------------------------------------------
 # 2. Build the Server
-#    Depends on server.c AND common.o
+#    Depends on server.c AND common.o, buffer.o, kv.o
 # ----------------------------------------------------
-server: src/server.c src/common.o src/buffer.o
-	$(CC) $(CFLAGS) -o server src/server.c src/common.o src/buffer.o
+server: src/server.c src/common.o src/buffer.o src/kv.o
+	$(CC) $(CFLAGS) -o server src/server.c src/common.o src/buffer.o src/kv.o
 
 # ----------------------------------------------------
 # 3. Build the Client
