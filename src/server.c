@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <unistd.h>
 #include <string.h>
 #include <assert.h>
@@ -8,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include "common.h"
+#include "buffer.h"
 
 #define k_max_msg 4096
 
@@ -28,6 +30,7 @@ typedef struct Conn {
     int fd;
     int state;  // STATE_REQ or STATE_RES
     // rbuf and wbuf are in the userspace (heap memory), not in the kernel
+    /*
     // read buffer
     size_t rbuf_size;  // how many bytes currently in rbuf
     uint8_t rbuf[4 + k_max_msg];
@@ -35,6 +38,9 @@ typedef struct Conn {
     size_t wbuf_size;  // total bytes to send
     size_t wbuf_sent;  // offset (already sent)
     uint8_t wbuf[4 + k_max_msg];
+    */
+    Buffer rbuf;
+    Buffer wbuf;
 } Conn;
 
 // Use fd as the index (key)
@@ -92,44 +98,56 @@ static int32_t accept_new_conn(int fd) {
     }
     conn->fd = conn_fd;
     conn->state = STATE_REQ;
+    /*
     conn->rbuf_size = 0;
     conn->wbuf_size = 0;
     conn->wbuf_sent = 0;
+    */
+    buffer_init(&conn->rbuf, k_max_msg);
+    buffer_init(&conn->wbuf, k_max_msg);
 
     conn_put(conn);
     return 0;
 }
 
 static ReqStatus try_one_request(Conn *conn) {
+    Buffer *rbuf = &conn->rbuf;
+    Buffer *wbuf = &conn->wbuf;
+
     // 1. Check for the 4-byte header
-    if (conn->rbuf_size < 4) {
+    if (buf_read_size(rbuf) < 4) {
         return REQ_INCOMPLETE;
     }
 
     uint32_t len = 0;
-    memcpy(&len, &conn->rbuf[0], 4);
+    memcpy(&len, buf_read_ptr(rbuf), 4);
     if (len > k_max_msg) {
         msg("too long");
         return REQ_ERROR;
     }
 
     // 2. Check for rest of the message
-    if (4 + len > conn->rbuf_size) {
+    if (4 + len > buf_read_size(rbuf)) {
         return REQ_INCOMPLETE;  // wait for more data
     }
 
     // 3. Got a full message
-    printf("client says: %.*s\n", len, &conn->rbuf[4]);
+    printf("client says: %.*s\n", len, buf_read_ptr(rbuf) + 4);
 
     // 4. Generate response
     const char *reply = "world";
     uint32_t reply_len = (uint32_t)strlen(reply);
 
+    /*
     memcpy(&conn->wbuf[0], &reply_len, 4);
     memcpy(&conn->wbuf[4], reply, reply_len);
     conn->wbuf_size = 4 + reply_len;
     conn->wbuf_sent = 0;
+    */
+    buf_append(wbuf, (const uint8_t *)&reply_len, 4);
+    buf_append(wbuf, (const uint8_t *)reply, reply_len);
 
+    /*
     // 5. Remove the request from rbuf (left shift)
     size_t remain = conn->rbuf_size - (4 + len);
     if (remain) {
@@ -139,13 +157,25 @@ static ReqStatus try_one_request(Conn *conn) {
 
     // 6. Change connection state to response
     conn->state = STATE_RES;
+    */
+
+    // Commit the write
+    wbuf->w_pos += (4 + reply_len);
+
+    // Consume request from rbuf
+    buf_consume(rbuf, 4 + len);
 
     return REQ_PROCESSED;
 }
 
 static void handle_read(Conn *conn) {
+    /*
     assert(conn->rbuf_size < sizeof(conn->rbuf));
     ssize_t rv = read(conn->fd, &conn->rbuf[conn->rbuf_size], sizeof(conn->rbuf) - conn->rbuf_size);
+    */
+    buf_reserve(&conn->rbuf, 1024);
+    ssize_t rv = read(conn->fd, buf_write_ptr(&conn->rbuf), buf_write_space(&conn->rbuf));
+
     if (rv <= 0) {
         if (rv == 0) {  // Handle EOF
             msg("client closed connection");
@@ -158,11 +188,14 @@ static void handle_read(Conn *conn) {
         return;
     }
 
-    conn->rbuf_size += (size_t)rv;
+    // Mark bytes as written
+    // conn->rbuf_size += (size_t)rv;
+    conn->rbuf.w_pos += (size_t)rv;
 
     // Pipelining loop
     // While there is enough data for a full request, keep processing.
-    while (1) {
+    while (try_one_request(conn) == REQ_PROCESSED) {
+        /*
         ReqStatus status = try_one_request(conn);
 
         if (status == REQ_INCOMPLETE) break;  // Normal break
@@ -177,12 +210,22 @@ static void handle_read(Conn *conn) {
         if (conn->state == STATE_RES) {
             break;  // Stop processing new requests so the wbuf is not overwritten
         }
+        */
+    }
+
+    // If we have data in wbuf, we want to write it out
+    if (buf_read_size(&conn->wbuf) > 0) {
+        conn->state = STATE_RES;
     }
 }
 
 static void handle_write(Conn *conn) {
+    /*
     assert(conn->wbuf_size > conn->wbuf_sent);
     ssize_t rv = write(conn->fd, &conn->wbuf[conn->wbuf_sent], conn->wbuf_size - conn->wbuf_sent);
+    */
+    ssize_t rv = write(conn->fd, buf_read_ptr(&conn->wbuf), buf_read_size(&conn->wbuf));
+
     if (rv <= 0) {
         if (rv < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {  // Not ready, try again later.
             return;
@@ -191,14 +234,17 @@ static void handle_write(Conn *conn) {
         return;
     }
 
+    /*
     conn->wbuf_sent += (size_t)rv;
     assert(conn->wbuf_sent <= conn->wbuf_size);
+    */
+    buf_consume(&conn->wbuf, (size_t)rv);
 
     // If finished sending the whole response, switch back to the reading mode
-    if (conn->wbuf_sent == conn->wbuf_size) {
+    if (buf_read_size(&conn->wbuf) == 0) {
         conn->state = STATE_REQ;
-        conn->wbuf_size = 0;
-        conn->wbuf_sent = 0;
+        conn->wbuf.r_pos = 0;
+        conn->wbuf.w_pos = 0;
     }
 }
 
