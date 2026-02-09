@@ -6,7 +6,7 @@
 // Global head of the list
 static Entry *g_data = NULL;
 
-static Entry *kv_find(const char *key) {
+Entry *kv_find(const char *key) {
     Entry *e = g_data;
     while (e) {
         if (strcmp(e->key, key) == 0) {

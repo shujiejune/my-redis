@@ -70,7 +70,7 @@ uint8_t *buf_read_ptr(Buffer *buf) {
 }
 
 // Return how many bytes of valid data we have
-size_t buf_read_space(Buffer *buf) {
+size_t buf_read_size(Buffer *buf) {
     return buf->w_pos - buf->r_pos;
 }
 

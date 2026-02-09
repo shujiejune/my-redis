@@ -10,6 +10,7 @@ typedef struct Entry {
     char *val;
 } Entry;
 
+Entry *kv_find(const char *key);
 void kv_put(const char *key, const char *val);
 char *kv_get(const char *key);
 void kv_del(const char *key);

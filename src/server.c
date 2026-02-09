@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <unistd.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <netinet/in.h>
 #include "common.h"
 #include "buffer.h"
+#include "kv.h"
 
 #define k_max_msg 4096
 
@@ -24,6 +26,12 @@ typedef enum {
     REQ_INCOMPLETE = 0, // not enough data, stop loop
     REQ_ERROR = -1      // malformed message, kill connection
 } ReqStatus;
+
+enum {
+    RES_OK = 0,
+    RES_ERR = 1,
+    RES_NX = 2
+};
 
 // Context of a connection
 typedef struct Conn {
@@ -110,6 +118,66 @@ static int32_t accept_new_conn(int fd) {
     return 0;
 }
 
+static bool read_u32(const uint8_t **curr, const uint8_t *end, uint32_t *out) {
+    if (*curr + 4 > end) {
+        return false;
+    }
+    memcpy(out, *curr, 4);
+    *curr += 4;
+    return true;
+}
+
+static bool read_str(const uint8_t **curr, const uint8_t *end, char **out) {
+    uint32_t len = 0;
+    if (!read_u32(curr, end, &len)) {
+        return false;
+    }
+    if (*curr + len > end) {
+        return false;
+    }
+    *out = (char *)malloc(len + 1);
+    if (!*out) {
+        return false;
+    }
+    memcpy(*out, *curr, len);
+    (*out)[len] = '\0';
+    *curr += len;
+    return true;
+}
+
+static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
+    uint32_t status = RES_OK;
+    char *msg = NULL;
+    char *temp_msg = NULL;  // helper for dynamic strings
+
+    if (n_cmd == 2 && strcmp(cmd[0], "get") == 0) {
+        Entry *e = kv_find(cmd[1]);
+        if (!e) {
+            status = RES_NX;
+        } else {
+            status = RES_OK;
+            msg = e->val;
+        }
+    } else if (n_cmd == 3 && strcmp(cmd[0], "set") == 0) {
+        kv_put(cmd[1], cmd[2]);
+    } else if (n_cmd == 2 && strcmp(cmd[0], "del") == 0) {
+        kv_del(cmd[1]);
+    } else {
+        status = RES_ERR;
+        temp_msg = "Unknown command";
+        msg = temp_msg;
+    }
+
+    // Response formatting
+    uint32_t msg_len = msg ? (uint32_t)strlen(msg) : 0;
+    uint32_t total_len = 4 + msg_len;  // 4 bytes for status code + msg
+
+    buf_append(wbuf, (uint8_t *)&total_len, 4);
+    buf_append(wbuf, (uint8_t *)&status, 4);
+    buf_append(wbuf, (uint8_t *)msg, msg_len);
+}
+
+// Main parsing loop
 static ReqStatus try_one_request(Conn *conn) {
     Buffer *rbuf = &conn->rbuf;
     Buffer *wbuf = &conn->wbuf;
@@ -125,29 +193,54 @@ static ReqStatus try_one_request(Conn *conn) {
         msg("too long");
         return REQ_ERROR;
     }
-
-    // 2. Check for rest of the message
+    // Do not proceed to parse until we read the full message
     if (4 + len > buf_read_size(rbuf)) {
         return REQ_INCOMPLETE;  // wait for more data
+    }
+
+    // 2. Parse payload
+    const uint8_t *curr = buf_read_ptr(rbuf) + 4;
+    const uint8_t *end = curr + len;
+
+    uint32_t n_cmd = 0;
+    if (!read_u32(&curr, end, &n_cmd)) {
+        conn->state = STATE_END;
+        return REQ_ERROR;
+    }
+    if (n_cmd > 16) {  // dafety limit on args
+        conn->state = STATE_END;
+        return REQ_ERROR;
+    }
+
+    // Parse list of strings
+    char *cmd[16];
+    for (uint32_t i = 0; i < n_cmd; i++) {
+        if (!read_str(&curr, end, &cmd[i])) {
+            // Cleanup already parsed strings on error
+            for (uint32_t j = 0; j < i; j++) {
+                free(cmd[j]);
+            }
+            conn->state = STATE_END;
+            return REQ_ERROR;
+        }
     }
 
     // 3. Got a full message
     printf("client says: %.*s\n", len, buf_read_ptr(rbuf) + 4);
 
-    // 4. Generate response
+    // 4. Execute command (Generate response)
+    /*
     const char *reply = "world";
     uint32_t reply_len = (uint32_t)strlen(reply);
 
-    /*
     memcpy(&conn->wbuf[0], &reply_len, 4);
     memcpy(&conn->wbuf[4], reply, reply_len);
     conn->wbuf_size = 4 + reply_len;
     conn->wbuf_sent = 0;
-    */
+
     buf_append(wbuf, (const uint8_t *)&reply_len, 4);
     buf_append(wbuf, (const uint8_t *)reply, reply_len);
 
-    /*
     // 5. Remove the request from rbuf (left shift)
     size_t remain = conn->rbuf_size - (4 + len);
     if (remain) {
@@ -157,10 +250,16 @@ static ReqStatus try_one_request(Conn *conn) {
 
     // 6. Change connection state to response
     conn->state = STATE_RES;
-    */
 
     // Commit the write
     wbuf->w_pos += (4 + reply_len);
+    */
+    do_request(cmd, n_cmd, &conn->wbuf);
+
+    // 5. Cleanup
+    for (uint32_t i = 0; i < n_cmd; i++) {
+        free(cmd[i]);
+    }
 
     // Consume request from rbuf
     buf_consume(rbuf, 4 + len);
