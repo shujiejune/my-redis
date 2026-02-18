@@ -43,23 +43,6 @@ static struct {
     HMap db; // the top-level hashtable
 } g_data;
 
-// FNV Hash
-static uint64_t str_hash(const uint8_t *data, size_t len) {
-    uint32_t h = 0x811C9DC5;
-    for (size_t i =  0; i < len; i++) {
-        h = (h + data[i]) * 0x01000193;
-    }
-    return h;
-}
-
-// Check if two entries are equal
-// called by hashtable
-static bool entry_eq(HNode *lhs, HNode *rhs) {
-    Entry *l = container_of(lhs, Entry, node);
-    Entry *r = container_of(rhs, Entry, node);
-    return strcmp(l->key, r->key) == 0;
-}
-
 // Context of a connection
 typedef struct Conn {
     int fd;
@@ -175,19 +158,13 @@ static bool read_str(const uint8_t **curr, const uint8_t *end, char **out) {
 // --- Command Execution ---
 
 static void do_get(char **cmd, Buffer *out) {
-    Entry key_dummy;
-    key_dummy.key = cmd[1];
-    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
+    // Call the logic layer
+    char *val = kv_get(cmd[1]);
 
-    HNode *node = hm_lookup(&g_data.db, &key_dummy.node, entry_eq);
-
+    // Format the network response
     uint32_t status = RES_OK;
-    char *val = NULL;
-
-    if (!node) {
+    if (!val) {
         status = RES_NX;
-    } else {
-        val = container_of(node, Entry, node)->val;
     }
 
     // Response format: [TotalLen][Status][Value]
@@ -202,48 +179,23 @@ static void do_get(char **cmd, Buffer *out) {
 }
 
 static void do_set(char **cmd, Buffer *out) {
-    Entry key_dummy;
-    key_dummy.key = cmd[1];
-    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
-
-    HNode *node = hm_lookup(&g_data.db, &key_dummy.node, entry_eq);
-
-    if (node) {
-        Entry *e = container_of(node, Entry, node);
-        free(e->val);
-        e->val = strdup(cmd[2]);
-    } else {
-        Entry *e = malloc(sizeof(Entry));
-        e->key = strdup(cmd[1]);
-        e->val = strdup(cmd[2]);
-        e->node.hcode = key_dummy.node.hcode;
-        e->node.next = NULL;
-        hm_insert(&g_data.db, &e->node);
-    }
+    kv_put(cmd[1], cmd[2]);
 
     // Response: OK
     uint32_t status = RES_OK;
     uint32_t total_len = 4; // Just status code
+
     buf_append(out, (uint8_t *)&total_len, 4);
     buf_append(out, (uint8_t *)&status, 4);
 }
 
 static void do_delete(char **cmd, Buffer *out) {
-    Entry key_dummy;
-    key_dummy.key = cmd[1];
-    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
-
-    HNode *node = hm_delete(&g_data.db, &key_dummy.node, entry_eq);
-    if (node) {
-        Entry *e = container_of(node, Entry, node);
-        free(e->key);
-        free(e->val);
-        free(e);
-    }
+    kv_del(cmd[1]);
 
     // Response: OK
     uint32_t status = RES_OK;
     uint32_t total_len = 4;
+
     buf_append(out, (uint8_t *)&total_len, 4);
     buf_append(out, (uint8_t *)&status, 4);
 }
