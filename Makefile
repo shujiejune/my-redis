@@ -21,12 +21,15 @@ src/buffer.o: src/buffer.c
 src/kv.o: src/kv.c
 	$(CC) $(CFLAGS) -c src/kv.c -o src/kv.o
 
+src/hashtable.o: src/hashtable.c
+	$(CC) $(CFLAGS) -c src/hashtable.c -o src/hashtable.o
+
 # ----------------------------------------------------
 # 2. Build the Server
-#    Depends on server.c AND common.o, buffer.o, kv.o
+#    Depends on server.c AND common.o, buffer.o, kv.o, hashtable.o
 # ----------------------------------------------------
-server: src/server.c src/common.o src/buffer.o src/kv.o
-	$(CC) $(CFLAGS) -o server src/server.c src/common.o src/buffer.o src/kv.o
+server: src/server.c src/common.o src/buffer.o src/kv.o src/hashtable.o
+	$(CC) $(CFLAGS) -o server src/server.c src/common.o src/buffer.o src/kv.o src/hashtable.o
 
 # ----------------------------------------------------
 # 3. Build the Client
