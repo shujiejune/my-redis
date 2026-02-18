@@ -17,9 +17,6 @@
 #define k_max_msg 4096
 #define k_max_args 200 * 1000
 
-#define container_of(ptr, T, member) \
-    ((T *)( (char *)ptr - offsetof(T, member) ))
-
 enum {
     STATE_REQ = 0,  // reading request
     STATE_RES = 1,  // sending response
@@ -37,11 +34,6 @@ enum {
     RES_ERR = 1,
     RES_NX = 2
 };
-
-// Global database
-static struct {
-    HMap db; // the top-level hashtable
-} g_data;
 
 // Context of a connection
 typedef struct Conn {
