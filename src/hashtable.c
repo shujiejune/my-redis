@@ -53,6 +53,9 @@ static HNode *h_detach(HTable *htable, HNode **target) {
     return node;
 }
 
+// Scan each slot
+// Move a constant number of nodes from the older table to the newer table
+// Then exit
 static void hm_help_rehashing(HMap *hmap) {
     size_t nwork = 0;
     while (nwork < k_rehashing_work && hmap->older.size > 0) {

@@ -12,8 +12,13 @@
 #include "common.h"
 #include "buffer.h"
 #include "kv.h"
+#include "hashtable.h"
 
 #define k_max_msg 4096
+#define k_max_args 200 * 1000
+
+#define container_of(ptr, T, member) \
+    ((T *)( (char *)ptr - offsetof(T, member) ))
 
 enum {
     STATE_REQ = 0,  // reading request
@@ -32,6 +37,28 @@ enum {
     RES_ERR = 1,
     RES_NX = 2
 };
+
+// Global database
+static struct {
+    HMap db; // the top-level hashtable
+} g_data;
+
+// FNV Hash
+static uint64_t str_hash(const uint8_t *data, size_t len) {
+    uint32_t h = 0x811C9DC5;
+    for (size_t i =  0; i < len; i++) {
+        h = (h + data[i]) * 0x01000193;
+    }
+    return h;
+}
+
+// Check if two entries are equal
+// called by hashtable
+static bool entry_eq(HNode *lhs, HNode *rhs) {
+    Entry *l = container_of(lhs, Entry, node);
+    Entry *r = container_of(rhs, Entry, node);
+    return strcmp(l->key, r->key) == 0;
+}
 
 // Context of a connection
 typedef struct Conn {
@@ -145,36 +172,99 @@ static bool read_str(const uint8_t **curr, const uint8_t *end, char **out) {
     return true;
 }
 
-static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
-    uint32_t status = RES_OK;
-    char *msg = NULL;
-    char *temp_msg = NULL;  // helper for dynamic strings
+// --- Command Execution ---
 
-    if (n_cmd == 2 && strcmp(cmd[0], "get") == 0) {
-        Entry *e = kv_find(cmd[1]);
-        if (!e) {
-            status = RES_NX;
-        } else {
-            status = RES_OK;
-            msg = e->val;
-        }
-    } else if (n_cmd == 3 && strcmp(cmd[0], "set") == 0) {
-        kv_put(cmd[1], cmd[2]);
-    } else if (n_cmd == 2 && strcmp(cmd[0], "del") == 0) {
-        kv_del(cmd[1]);
+static void do_get(char **cmd, Buffer *out) {
+    Entry key_dummy;
+    key_dummy.key = cmd[1];
+    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
+
+    HNode *node = hm_lookup(&g_data.db, &key_dummy.node, entry_eq);
+
+    uint32_t status = RES_OK;
+    char *val = NULL;
+
+    if (!node) {
+        status = RES_NX;
     } else {
-        status = RES_ERR;
-        temp_msg = "Unknown command";
-        msg = temp_msg;
+        val = container_of(node, Entry, node)->val;
     }
 
-    // Response formatting
-    uint32_t msg_len = msg ? (uint32_t)strlen(msg) : 0;
-    uint32_t total_len = 4 + msg_len;  // 4 bytes for status code + msg
+    // Response format: [TotalLen][Status][Value]
+    uint32_t val_len = val ? (uint32_t)strlen(val) : 0;
+    uint32_t total_len = 4 + val_len;
 
-    buf_append(wbuf, (uint8_t *)&total_len, 4);
-    buf_append(wbuf, (uint8_t *)&status, 4);
-    buf_append(wbuf, (uint8_t *)msg, msg_len);
+    buf_append(out, (uint8_t *)&total_len, 4);
+    buf_append(out, (uint8_t *)&status, 4);
+    if (val) {
+        buf_append(out, (uint8_t *)val, val_len);
+    }
+}
+
+static void do_set(char **cmd, Buffer *out) {
+    Entry key_dummy;
+    key_dummy.key = cmd[1];
+    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
+
+    HNode *node = hm_lookup(&g_data.db, &key_dummy.node, entry_eq);
+
+    if (node) {
+        Entry *e = container_of(node, Entry, node);
+        free(e->val);
+        e->val = strdup(cmd[2]);
+    } else {
+        Entry *e = malloc(sizeof(Entry));
+        e->key = strdup(cmd[1]);
+        e->val = strdup(cmd[2]);
+        e->node.hcode = key_dummy.node.hcode;
+        e->node.next = NULL;
+        hm_insert(&g_data.db, &e->node);
+    }
+
+    // Response: OK
+    uint32_t status = RES_OK;
+    uint32_t total_len = 4; // Just status code
+    buf_append(out, (uint8_t *)&total_len, 4);
+    buf_append(out, (uint8_t *)&status, 4);
+}
+
+static void do_delete(char **cmd, Buffer *out) {
+    Entry key_dummy;
+    key_dummy.key = cmd[1];
+    key_dummy.node.hcode = str_hash((uint8_t *)key_dummy.key, strlen(key_dummy.key));
+
+    HNode *node = hm_delete(&g_data.db, &key_dummy.node, entry_eq);
+    if (node) {
+        Entry *e = container_of(node, Entry, node);
+        free(e->key);
+        free(e->val);
+        free(e);
+    }
+
+    // Response: OK
+    uint32_t status = RES_OK;
+    uint32_t total_len = 4;
+    buf_append(out, (uint8_t *)&total_len, 4);
+    buf_append(out, (uint8_t *)&status, 4);
+}
+
+static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
+    if (n_cmd == 2 && strcmp(cmd[0], "get") == 0) {
+        do_get(cmd, wbuf);
+    } else if (n_cmd == 3 && strcmp(cmd[0], "set") == 0) {
+        do_set(cmd, wbuf);
+    } else if (n_cmd == 2 && strcmp(cmd[0], "del") == 0) {
+        do_delete(cmd, wbuf);
+    } else {
+        uint32_t status = RES_ERR;
+        char *msg = "Unknown command";
+        uint32_t msg_len = strlen(msg);
+        uint32_t total_len = 4 + msg_len;
+
+        buf_append(wbuf, (uint8_t *)&total_len, 4);
+        buf_append(wbuf, (uint8_t *)&status, 4);
+        buf_append(wbuf, (uint8_t *)msg, msg_len);
+    }
 }
 
 // Main parsing loop
@@ -191,6 +281,7 @@ static ReqStatus try_one_request(Conn *conn) {
     memcpy(&len, buf_read_ptr(rbuf), 4);
     if (len > k_max_msg) {
         msg("too long");
+        conn->state = STATE_END;
         return REQ_ERROR;
     }
     // Do not proceed to parse until we read the full message

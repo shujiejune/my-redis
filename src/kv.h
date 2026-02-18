@@ -2,10 +2,12 @@
 #define KV_H
 
 #include <stdio.h>
+#include "hashtable.h"
+
 
 // Key-Value Store (simply linked list)
 typedef struct Entry {
-    struct Entry *next;
+    HNode node;  // intrusive hashtable hook
     char *key;
     char *val;
 } Entry;
