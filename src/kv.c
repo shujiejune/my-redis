@@ -30,6 +30,10 @@ static bool entry_eq(HNode *lhs, HNode *rhs) {
     return strcmp(l->key, r->key) == 0;
 }
 
+size_t kv_size(void) {
+    return hm_size(&g_data);
+}
+
 // PUT: Insert or Update
 void kv_put(const char *key, const char *val) {
     // Construct a "Dummy" Entry just for the lookup
@@ -78,7 +82,7 @@ char *kv_get(const char *key) {
 }
 
 // DEL: Remove and Free
-void kv_del(const char *key) {
+bool kv_del(const char *key) {
     // Construct Dummy
     Entry key_dummy;
     key_dummy.key = (char *)key;
@@ -93,5 +97,26 @@ void kv_del(const char *key) {
         free(ent->key);
         free(ent->val);
         free(ent);
+        return true;
     }
+    return false;
+}
+
+// A wrapper struct to pass two things through the single void* argument
+struct kv_cb_arg {
+    bool (*user_cb)(const char *key, void *arg);
+    void *user_arg;
+};
+
+// Internal callback that unwraps the HNode into a string
+static bool internal_kv_cb(HNode *node, void *arg) {
+    struct kv_cb_arg *wrap = (struct kv_cb_arg *)arg;
+    Entry *ent = container_of(node, Entry, node);
+    // Call the server's clean callback with just the string
+    return wrap->user_cb(ent->key, wrap->user_arg);
+}
+
+void kv_foreach(bool (*cb)(const char *key, void *arg), void *arg) {
+    struct kv_cb_arg wrap = {cb, arg};
+    hm_foreach(&g_data, internal_kv_cb, &wrap);
 }

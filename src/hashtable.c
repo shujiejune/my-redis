@@ -53,6 +53,17 @@ static HNode *h_detach(HTable *htable, HNode **target) {
     return node;
 }
 
+static void h_foreach(HTable *htable, bool (*cb)(HNode *, void *), void *arg) {
+    if (!htable->table) return;
+    for (size_t i = 0; i <= htable->mask; i++) {
+        for (HNode *node = htable->table[i]; node != NULL; node = node->next) {
+            if (!cb(node, arg)) {
+                return; // Stop early if callback returns false
+            }
+        }
+    }
+}
+
 // Scan each slot
 // Move a constant number of nodes from the older table to the newer table
 // Then exit
@@ -128,4 +139,11 @@ void hm_clear(HMap *hmap) {
 
 size_t hm_size(HMap *hmap) {
     return hmap->newer.size + hmap->older.size;
+}
+
+// Iterate over all nodes in the hash map, calling the callback function for each node.
+// The callback function extracts the string from the HNode and appends it to the Buffer (*arg).
+void hm_foreach(HMap *hmap, bool (*cb)(HNode *, void *), void *arg) {
+    h_foreach(&hmap->newer, cb, arg);
+    h_foreach(&hmap->older, cb, arg);
 }

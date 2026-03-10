@@ -12,7 +12,6 @@
 #include "common.h"
 #include "buffer.h"
 #include "kv.h"
-#include "hashtable.h"
 
 #define k_max_msg 4096
 #define k_max_args 200 * 1000
@@ -33,6 +32,21 @@ enum {
     RES_OK = 0,
     RES_ERR = 1,
     RES_NX = 2
+};
+
+// --- Serialization Protocol Definitions ---
+enum {
+    ERR_UNKNOWN = 1,
+    ERR_TOO_BIG = 2
+};
+
+enum {
+    TAG_NIL = 0,
+    TAG_ERR = 1,
+    TAG_STR = 2,
+    TAG_INT = 3,
+    TAG_DBL = 4,
+    TAG_ARR = 5,
 };
 
 // Context of a connection
@@ -147,12 +161,69 @@ static bool read_str(const uint8_t **curr, const uint8_t *end, char **out) {
     return true;
 }
 
+// --- Format writers ---
+
+static void out_nil(Buffer *out) {
+    buf_append_u8(out, TAG_NIL);
+}
+
+static void out_str(Buffer *out, const char *s, size_t size) {
+    buf_append_u8(out, TAG_STR);
+    buf_append_u32(out, (uint32_t)size);
+    buf_append(out, (const uint8_t *)s, size);
+}
+
+static void out_int(Buffer *out, int64_t val) {
+    buf_append_u8(out, TAG_INT);
+    buf_append_i64(out, val);
+}
+
+static void out_err(Buffer *out, uint32_t code, const char* msg) {
+    buf_append_u8(out, TAG_ERR);
+    buf_append_u32(out, code);
+    uint32_t len = (uint32_t)strlen(msg);
+    buf_append_u32(out, len);
+    buf_append(out, (const uint8_t *)msg, len);
+}
+
+static void out_arr(Buffer *out, uint32_t n) {
+    buf_append_u8(out, TAG_ARR);
+    buf_append_u32(out, n);
+}
+
+// --- Response Framing Helpers ---
+
+static void response_begin(Buffer *out, size_t *header_pos) {
+    *header_pos = out->w_pos;  // remember where the length header goes
+    buf_append_u32(out, 0);    // reserve 4 bytes for total length (set 0 for now)
+}
+
+static void response_end(Buffer *out, size_t *header_pos) {
+    // Calculate how many bytes are written after the 4-bytes header
+    size_t msg_size = out->w_pos - *header_pos - 4;
+
+    // Safety check: has msg_size exceeded the buffer capacity?
+    if (msg_size > out->capacity) {
+        // Roll back the write pointer to delete the massive data
+        out->w_pos = *header_pos + 4;
+        // Write a short error message instead
+        out_err(out, ERR_TOO_BIG, "response is too big");
+        // Recalculate the newer size
+        msg_size = out->w_pos - *header_pos - 4;
+    }
+
+    // Go back to the bootmark and overrite the 4-bytes dummy header with the actual size
+    uint32_t len = (uint32_t)msg_size;
+    memcpy(out->data + *header_pos, &len, 4);
+}
+
 // --- Command Execution ---
 
 static void do_get(char **cmd, Buffer *out) {
     // Call the logic layer
     char *val = kv_get(cmd[1]);
 
+    /*
     // Format the network response
     uint32_t status = RES_OK;
     if (!val) {
@@ -168,20 +239,30 @@ static void do_get(char **cmd, Buffer *out) {
     if (val) {
         buf_append(out, (uint8_t *)val, val_len);
     }
+    */
+    if (!val) {
+        out_nil(out);
+    } else {
+        out_str(out, val, strlen(val));
+    }
 }
 
 static void do_set(char **cmd, Buffer *out) {
     kv_put(cmd[1], cmd[2]);
 
+    /*
     // Response: OK
     uint32_t status = RES_OK;
     uint32_t total_len = 4; // Just status code
 
     buf_append(out, (uint8_t *)&total_len, 4);
     buf_append(out, (uint8_t *)&status, 4);
+    */
+    out_nil(out);
 }
 
 static void do_delete(char **cmd, Buffer *out) {
+    /*
     kv_del(cmd[1]);
 
     // Response: OK
@@ -190,6 +271,24 @@ static void do_delete(char **cmd, Buffer *out) {
 
     buf_append(out, (uint8_t *)&total_len, 4);
     buf_append(out, (uint8_t *)&status, 4);
+    */
+    bool existed = kv_del(cmd[1]);
+    out_int(out, existed ? RES_OK : RES_NX);
+}
+
+// The callback: takes a string and appends it to the Buffer (*arg).
+static bool cb_keys(const char *key, void *arg) {
+    Buffer *out = (Buffer *)arg;
+    out_str(out, key, strlen(key));
+    return true;  // Keep iterating
+}
+
+// Handles the "keys" command: returns all keys as an array of strings.
+static void do_keys(char **cmd, Buffer *out) {
+    // Tell the client an array is coming and how big it is
+    out_arr(out, (uint32_t)kv_size());
+    // Let the iterator pumps all the strings into the Buffer
+    kv_foreach(cb_keys, out);
 }
 
 static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
@@ -199,7 +298,10 @@ static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
         do_set(cmd, wbuf);
     } else if (n_cmd == 2 && strcmp(cmd[0], "del") == 0) {
         do_delete(cmd, wbuf);
+    } else if (n_cmd == 1 && strcmp(cmd[0], "keys") == 0) {
+        do_keys(cmd, wbuf);
     } else {
+        /*
         uint32_t status = RES_ERR;
         char *msg = "Unknown command";
         uint32_t msg_len = strlen(msg);
@@ -208,6 +310,8 @@ static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
         buf_append(wbuf, (uint8_t *)&total_len, 4);
         buf_append(wbuf, (uint8_t *)&status, 4);
         buf_append(wbuf, (uint8_t *)msg, msg_len);
+        */
+        out_err(wbuf, ERR_UNKNOWN, "unknown command");
     }
 }
 
@@ -289,7 +393,12 @@ static ReqStatus try_one_request(Conn *conn) {
     // Commit the write
     wbuf->w_pos += (4 + reply_len);
     */
+    // Use serialization formats
+    // Total length + Serialized payload (depending on the response data type)
+    size_t header_pos = 0;
+    response_begin(&conn->wbuf, &header_pos);
     do_request(cmd, n_cmd, &conn->wbuf);
+    response_end(&conn->wbuf, &header_pos);
 
     // 5. Cleanup
     for (uint32_t i = 0; i < n_cmd; i++) {

@@ -41,5 +41,6 @@ void hm_insert(HMap *hmap, HNode *key);
 HNode *hm_delete(HMap *hmap, HNode *key, bool (*eq)(HNode *, HNode *));
 void hm_clear(HMap *hmap);
 size_t hm_size(HMap *hmap);
+void hm_foreach(HMap *hmap, bool (*cb)(HNode *, void *), void *arg);  // *cb is similar to *eq
 
 #endif

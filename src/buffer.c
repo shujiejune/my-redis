@@ -64,6 +64,19 @@ void buf_consume(Buffer *buf, size_t n) {
     }
 }
 
+// --- Serialization Helpers ---
+void buf_append_u8(Buffer *buf, uint8_t data) {
+    buf_append(buf, &data, 1);
+}
+
+void buf_append_u32(Buffer *buf, uint32_t data) {
+    buf_append(buf, (const uint8_t *)&data, 4);
+}
+
+void buf_append_i64(Buffer *buf, int64_t data) {
+    buf_append(buf, (const uint8_t *)&data, 8);
+}
+
 // Return pointer to active data
 uint8_t *buf_read_ptr(Buffer *buf) {
     return &buf->data[buf->r_pos];
