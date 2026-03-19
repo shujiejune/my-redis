@@ -6,7 +6,7 @@ CFLAGS = -Wall -Wextra -O2 -Isrc
 # -Isrc: look for header files in src/
 
 # List of targets to build by default
-all: server client
+all: server client test_avl
 
 # ----------------------------------------------------
 # 1. Compile shared code separately
@@ -24,6 +24,9 @@ src/kv.o: src/kv.c
 src/hashtable.o: src/hashtable.c
 	$(CC) $(CFLAGS) -c src/hashtable.c -o src/hashtable.o
 
+src/avl.o: src/avl.c
+	$(CC) $(CFLAGS) -c src/avl.c -o src/avl.o
+
 # ----------------------------------------------------
 # 2. Build the Server
 #    Depends on server.c AND common.o, buffer.o, kv.o, hashtable.o
@@ -39,7 +42,13 @@ client: src/client.c src/common.o
 	$(CC) $(CFLAGS) -o client src/client.c src/common.o
 
 # ----------------------------------------------------
-# 4. Utilities
+# 4. Build the AVL Test Suite
+# ----------------------------------------------------
+test_avl: src/test_avl.c src/avl.o
+	$(CC) $(CFLAGS) -o test_avl src/test_avl.c src/avl.o
+
+# ----------------------------------------------------
+# 5. Utilities
 # ----------------------------------------------------
 
 # Run just the server
@@ -47,7 +56,9 @@ run: server
 	./server
 
 # Run the test script
-test: server client
+test: server client test_avl
+	@echo "--- Running AVL Unit Tests ---"
+	./test_avl
 	@echo "--- Starting Server ---"
 	./server & PID=$$!; \
 	sleep 0.5; \
@@ -57,5 +68,5 @@ test: server client
 	kill $$PID
 
 clean:
-	rm -f server client src/*.o
+	rm -f server client test_avl src/*.o
 	-pkill -f server

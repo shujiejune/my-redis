@@ -284,7 +284,7 @@ static bool cb_keys(const char *key, void *arg) {
 }
 
 // Handles the "keys" command: returns all keys as an array of strings.
-static void do_keys(char **cmd, Buffer *out) {
+static void do_keys(Buffer *out) {
     // Tell the client an array is coming and how big it is
     out_arr(out, (uint32_t)kv_size());
     // Let the iterator pumps all the strings into the Buffer
@@ -299,7 +299,7 @@ static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
     } else if (n_cmd == 2 && strcmp(cmd[0], "del") == 0) {
         do_delete(cmd, wbuf);
     } else if (n_cmd == 1 && strcmp(cmd[0], "keys") == 0) {
-        do_keys(cmd, wbuf);
+        do_keys(wbuf);
     } else {
         /*
         uint32_t status = RES_ERR;
@@ -318,7 +318,7 @@ static void do_request(char **cmd, size_t n_cmd, Buffer *wbuf) {
 // Main parsing loop
 static ReqStatus try_one_request(Conn *conn) {
     Buffer *rbuf = &conn->rbuf;
-    Buffer *wbuf = &conn->wbuf;
+    // Buffer *wbuf = &conn->wbuf;
 
     // 1. Check for the 4-byte header
     if (buf_read_size(rbuf) < 4) {
@@ -346,7 +346,7 @@ static ReqStatus try_one_request(Conn *conn) {
         conn->state = STATE_END;
         return REQ_ERROR;
     }
-    if (n_cmd > 16) {  // dafety limit on args
+    if (n_cmd > 16) {  // safety limit on args
         conn->state = STATE_END;
         return REQ_ERROR;
     }

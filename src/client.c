@@ -55,28 +55,28 @@ int main() {
     // --- PIPELINING STEP 1: SEND EVERYTHING ---
     printf("--- Sending requests ---\n");
     const char *cmd_set[] ={"set", "mykey", "123"};
-    int32_t err = send_req(fd, cmd_set, 3);
+    send_req(fd, cmd_set, 3);
 
     const char *cmd_set2[] = {"set", "otherkey", "hello"};
     send_req(fd, cmd_set2, 3);
 
     const char *cmd_get[] = {"get", "mykey"};
-    err = send_req(fd, cmd_get, 2);
+    send_req(fd, cmd_get, 2);
 
     const char *cmd_keys[] = {"keys"};
     send_req(fd, cmd_keys, 1);
 
     const char *cmd_del[] = {"del", "mykey"};
-    err = send_req(fd, cmd_del, 2);
+    send_req(fd, cmd_del, 2);
 
     const char *cmd_bad[] = {"fake_cmd"};
-    err = send_req(fd, cmd_bad, 1);
+    send_req(fd, cmd_bad, 1);
 
     size_t query_count = 6;
 
     // --- PIPELINING STEP 2: READ EVERYTHING ---
     printf("--- Waiting for responses ---\n");
-    for (int i = 0; i < query_count; i++) {
+    for (size_t i = 0; i < query_count; i++) {
         int32_t err = read_res(fd);
         if (err) goto L_DONE;
     }
@@ -250,14 +250,15 @@ static int32_t read_res(int fd) {
     return rv == -1 ? rv : 0;
 }
 
+/*
 static int32_t query(int fd, const char *text) {
-    /* 1. Get the length of request */
+    // 1. Get the length of request
     uint32_t len = (uint32_t)strlen(text);
     if (len > k_max_msg) {
         return -1;
     }
 
-    /* 2. Send request */
+    // 2. Send request
     char wbuf[4 + k_max_msg];
     memcpy(wbuf, &len, 4);
     memcpy(&wbuf[4], text, len);
@@ -266,7 +267,7 @@ static int32_t query(int fd, const char *text) {
         return err;
     }
 
-    /* 3. Wait for the response */
+    // 3. Wait for the response
     char rbuf[4 + k_max_msg];
     errno = 0;
     err = read_full(fd, rbuf, 4);
@@ -285,8 +286,9 @@ static int32_t query(int fd, const char *text) {
         return err;
     }
 
-    /* 4. Print the response */
+    // 4. Print the response
     printf("Server says: %.*s\n", len, &rbuf[4]);
 
     return 0;
 }
+*/
